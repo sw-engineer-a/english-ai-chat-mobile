@@ -23,26 +23,16 @@ dist-ssr
 *.sln
 *.sw?
 
-# CSV banks: ignore everything except zip archives
-web/csv/**
-!web/csv/**/
-!web/csv/**/*.zip
-!web/csv/doctor/female/symptom-weights.csv
-web/scripts/_*.bundle.mjs
-web/csv/doctor/cancer/*
-
 # NDK build output (encryption/)
 encryption/obj/
 encryption/libs/
 
-# Unity Android project (mobile/)
-mobile/Library/
-mobile/Temp/
-mobile/Obj/
-mobile/Logs/
-mobile/UserSettings/
-mobile/Build/
-mobile/MemoryCaptures/
-mobile/*.csproj
-mobile/*.sln
-mobile/mobile/
+# Unity
+Library/
+Temp/
+Obj/
+Logs/
+UserSettings/
+Build/
+MemoryCaptures/
+*.csproj

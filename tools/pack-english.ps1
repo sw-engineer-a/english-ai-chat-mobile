@@ -1,11 +1,11 @@
 # Builds one small pack per age zip for the Unity app.
-# Source: web/csv/english/*.zip
-# Output: mobile/Assets/StreamingAssets/english/*.pack
+# Source: ../english-ai-chat-web/csv/english/*.zip
+# Output: Assets/StreamingAssets/english/*.pack
 
 $ErrorActionPreference = "Stop"
-$root = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-$srcDir = Join-Path $root "web\csv\english"
-$outDir = Join-Path $root "mobile\Assets\StreamingAssets\english"
+$repo = Split-Path $PSScriptRoot -Parent
+$srcDir = Join-Path (Split-Path $repo -Parent) "english-ai-chat-web\csv\english"
+$outDir = Join-Path $repo "Assets\StreamingAssets\english"
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 
 $code = @'

@@ -131,6 +131,8 @@ public class DragonApp : MonoBehaviour
             }
             else if (voice.VoiceHeard)
                 captionText.text = "● Hearing you… keep speaking";
+            else if (!string.IsNullOrEmpty(voice.MicStatus) && voice.MicStatus != "Mic on — speak" && voice.MicStatus != "Mic on — speak English" && voice.MicStatus != "Opening mic…")
+                captionText.text = "● " + voice.MicStatus;
             else if (!voice.MicOpen)
                 captionText.text = "● No mic — type English, then release";
             else
@@ -578,7 +580,14 @@ public class DragonApp : MonoBehaviour
         if (string.IsNullOrEmpty(text))
         {
             string hint;
-            if (voice.UsesTypedInput)
+            string status = voice.MicStatus;
+            bool stated = !string.IsNullOrEmpty(status)
+                && status != "Mic on — speak"
+                && status != "Mic on — speak English"
+                && status != "Opening mic…";
+            if (stated)
+                hint = status;
+            else if (voice.UsesTypedInput)
             {
                 if (heard)
                     hint = "Mic works (bars moved). On PC type English in the box, then hold Start.";

@@ -6,8 +6,8 @@ public class Voice : MonoBehaviour
     string lastHeard = "";
     string liveCaption = "";
     bool listening;
-    AndroidJavaObject recognizer;
     AndroidJavaObject tts;
+    OfflineVoice offline;
     bool ttsReady;
     string pendingHeard;
     string pendingLive;
@@ -22,6 +22,8 @@ public class Voice : MonoBehaviour
     bool voiceHeard;
     bool speechReady;
     string micStatus = "";
+    string pendingStatus;
+    bool speechProblem;
 
     public string LastHeard
     {
@@ -114,11 +116,19 @@ public class Voice : MonoBehaviour
         Debug.Log("GOGO: " + text);
     }
 
+    void Start()
+    {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (offline == null) offline = new OfflineVoice();
+        offline.Prepare();
+#endif
+    }
+
     public void Stop()
     {
 #if UNITY_ANDROID && !UNITY_EDITOR
         if (tts != null) tts.Call<int>("stop");
-        if (recognizer != null) recognizer.Call("stopListening");
+        if (offline != null) offline.Cancel();
 #endif
         Listening = false;
         StopMicProbe();
@@ -138,6 +148,7 @@ public class Voice : MonoBehaviour
         MicLevel = 0f;
         voiceHeard = false;
         speechReady = false;
+        speechProblem = false;
         micSeen = false;
         micStatus = "Opening mic…";
 #if UNITY_ANDROID && !UNITY_EDITOR
@@ -146,25 +157,13 @@ public class Voice : MonoBehaviour
         Listening = true;
         StartMicProbe();
 #if UNITY_ANDROID && !UNITY_EDITOR
-        try
-        {
-            EnsureRecognizer();
-            AndroidJavaClass intentClass = new AndroidJavaClass("android.speech.RecognizerIntent");
-            AndroidJavaObject intent = new AndroidJavaObject("android.content.Intent", intentClass.GetStatic<string>("ACTION_RECOGNIZE_SPEECH"));
-            intent.Call<AndroidJavaObject>("putExtra", intentClass.GetStatic<string>("EXTRA_LANGUAGE_MODEL"), intentClass.GetStatic<string>("LANGUAGE_MODEL_FREE_FORM"));
-            intent.Call<AndroidJavaObject>("putExtra", intentClass.GetStatic<string>("EXTRA_LANGUAGE"), "en-US");
-            intent.Call<AndroidJavaObject>("putExtra", intentClass.GetStatic<string>("EXTRA_PARTIAL_RESULTS"), true);
-            intent.Call<AndroidJavaObject>("putExtra", intentClass.GetStatic<string>("EXTRA_MAX_RESULTS"), 1);
-            recognizer.Call("startListening", intent);
-            speechReady = true;
-            micSeen = true;
-            micStatus = "Mic on — speak";
-        }
-        catch (Exception error)
-        {
-            Debug.LogWarning(error.Message);
-            micStatus = "Mic error — type instead";
-        }
+        if (offline == null) offline = new OfflineVoice();
+        offline.Begin();
+        speechProblem = offline.Busy || offline.Failed;
+        speechReady = offline.Ready && !offline.Failed;
+        micOpen = offline.Open;
+        if (offline.Open) micSeen = true;
+        if (!string.IsNullOrEmpty(offline.Status)) micStatus = offline.Status;
 #else
         // Windows Unity speech (DictationRecognizer) fails on this PC (StopAsync 0x80131509).
         // Keep the real USB mic open for the impulse meter; words come from the type box.
@@ -179,12 +178,25 @@ public class Voice : MonoBehaviour
     public void EndListen()
     {
 #if UNITY_ANDROID && !UNITY_EDITOR
-        if (recognizer != null) recognizer.Call("stopListening");
+        string said = offline != null ? offline.End() : "";
+        if (!string.IsNullOrEmpty(said))
+        {
+            pendingHeard = said;
+            LastHeard = said;
+            LiveCaption = said;
+            voiceHeard = true;
+            micStatus = "";
+        }
+        else if (offline != null && !string.IsNullOrEmpty(offline.Status))
+            micStatus = offline.Status;
 #endif
         Listening = false;
         StopMicProbe();
         MicLevel = 0f;
+#if UNITY_ANDROID && !UNITY_EDITOR
+#else
         micStatus = "";
+#endif
     }
 
     public void DisposeListen()
@@ -202,6 +214,30 @@ public class Voice : MonoBehaviour
 
     void Update()
     {
+#if UNITY_ANDROID && !UNITY_EDITOR
+        if (offline != null)
+        {
+            offline.Tick();
+            if (Listening)
+            {
+                micOpen = offline.Open;
+                if (offline.Open) micSeen = true;
+                speechReady = offline.Ready && !offline.Failed;
+                if (!string.IsNullOrEmpty(offline.Live))
+                {
+                    pendingLive = offline.Live;
+                    voiceHeard = true;
+                }
+                if (offline.Busy || offline.Failed || !offline.Open)
+                {
+                    speechProblem = true;
+                    if (!string.IsNullOrEmpty(offline.Status)) pendingStatus = offline.Status;
+                }
+                else
+                    speechProblem = false;
+            }
+        }
+#endif
         if (pendingLive != null)
         {
             LiveCaption = pendingLive;
@@ -213,6 +249,11 @@ public class Voice : MonoBehaviour
             LiveCaption = pendingHeard;
             pendingHeard = null;
         }
+        if (pendingStatus != null)
+        {
+            micStatus = pendingStatus;
+            pendingStatus = null;
+        }
         UpdateMicLevel();
     }
 
@@ -221,9 +262,6 @@ public class Voice : MonoBehaviour
         StopMicProbe();
         micOpen = false;
 #if UNITY_ANDROID && !UNITY_EDITOR
-        micOpen = true;
-        micSeen = true;
-        micStatus = "Mic on — speak";
 #else
         try
         {
@@ -287,7 +325,9 @@ public class Voice : MonoBehaviour
 
         float target = 0f;
 #if UNITY_ANDROID && !UNITY_EDITOR
-        if (pendingRms > -90f)
+        if (offline != null && offline.Open)
+            target = offline.Level;
+        else if (pendingRms > -90f)
             target = Mathf.Clamp01((pendingRms + 2f) / 10f);
 #else
         if (micClip != null && Microphone.IsRecording(micDevice))
@@ -321,6 +361,7 @@ public class Voice : MonoBehaviour
         realAudio = micClip != null && target > 0.12f;
 #endif
         if (realAudio) voiceHeard = true;
+        if (speechProblem) return;
         if (hasWords)
         {
             voiceHeard = true;
@@ -330,11 +371,6 @@ public class Voice : MonoBehaviour
             micStatus = UsesTypedInput ? "Hearing you — type words" : "Hearing you…";
         else if (micOpen || micSeen)
             micStatus = UsesTypedInput ? "Mic OK — type English" : "Mic on — speak English";
-    }
-
-    void OnRms(float rms)
-    {
-        pendingRms = rms;
     }
 
     void OnDestroy()
@@ -355,29 +391,6 @@ public class Voice : MonoBehaviour
         ttsReady = ok;
     }
 
-    void EnsureRecognizer()
-    {
-        if (recognizer != null) return;
-        AndroidJavaClass unity = new AndroidJavaClass("com.unity3d.player.UnityPlayer");
-        AndroidJavaObject activity = unity.GetStatic<AndroidJavaObject>("currentActivity");
-        AndroidJavaClass speech = new AndroidJavaClass("android.speech.SpeechRecognizer");
-        recognizer = speech.CallStatic<AndroidJavaObject>("createSpeechRecognizer", activity);
-        recognizer.Call("setRecognitionListener", new ListenProxy(OnPartial, OnFinal, OnRms));
-    }
-
-    void OnPartial(string text)
-    {
-        pendingLive = text;
-        voiceHeard = true;
-    }
-
-    void OnFinal(string text)
-    {
-        pendingHeard = text;
-        pendingLive = text;
-        voiceHeard = true;
-    }
-
     class TtsListener : AndroidJavaProxy
     {
         readonly Action<bool> done;
@@ -390,45 +403,6 @@ public class Voice : MonoBehaviour
         public void onInit(int status)
         {
             done(status == 0);
-        }
-    }
-
-    class ListenProxy : AndroidJavaProxy
-    {
-        readonly Action<string> onPartial;
-        readonly Action<string> onFinal;
-        readonly Action<float> onRms;
-
-        public ListenProxy(Action<string> onPartial, Action<string> onFinal, Action<float> onRms)
-            : base("android.speech.RecognitionListener")
-        {
-            this.onPartial = onPartial;
-            this.onFinal = onFinal;
-            this.onRms = onRms;
-        }
-
-        public void onReadyForSpeech(AndroidJavaObject bundle) { }
-        public void onBeginningOfSpeech() { }
-        public void onRmsChanged(float rms)
-        {
-            if (onRms != null) onRms(rms);
-        }
-        public void onBufferReceived(byte[] buffer) { }
-        public void onEndOfSpeech() { }
-        public void onError(int error) { }
-        public void onPartialResults(AndroidJavaObject bundle) { Read(bundle, false); }
-        public void onResults(AndroidJavaObject bundle) { Read(bundle, true); }
-        public void onEvent(int type, AndroidJavaObject bundle) { }
-
-        void Read(AndroidJavaObject bundle, bool isFinal)
-        {
-            if (bundle == null) return;
-            AndroidJavaObject list = bundle.Call<AndroidJavaObject>("getStringArrayList", "results_recognition");
-            if (list == null) return;
-            string text = list.Call<string>("get", 0);
-            if (string.IsNullOrEmpty(text)) return;
-            if (isFinal) onFinal(text);
-            else onPartial(text);
         }
     }
 }
